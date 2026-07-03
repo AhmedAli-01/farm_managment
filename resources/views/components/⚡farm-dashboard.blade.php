@@ -59,7 +59,9 @@ new class extends Component {
         $this->totalFields = Field::count();
         $this->activeCycles = CropCycle::where('status', 'growing')->count();
         $this->totalExpenses = CropLog::sum('amount_in_usd');
-        $this->fields = Field::with('plots.cropCycles.partner')->get();
+        
+        // Eager load the logs relationship so each plot can compute its individual costs
+        $this->fields = Field::with(['plots.cropCycles.partner', 'plots.cropCycles.logs'])->get();
         
         $this->activeCycleOptions = CropCycle::where('status', 'growing')->get();
         $this->allPlotOptions = Plot::all();
@@ -113,7 +115,6 @@ new class extends Component {
 
         $finalPartnerId = null;
 
-        // Run validation rules contextually based on setup choice
         if ($this->new_operation_type !== 'direct') {
             if ($this->partner_mode === 'new') {
                 $this->validate([
@@ -136,7 +137,6 @@ new class extends Component {
             }
         }
 
-        // 1. Generate the primary crop cycle record
         $cycle = CropCycle::create([
             'plot_id' => $this->new_plot_id,
             'partner_id' => $finalPartnerId,
@@ -148,10 +148,8 @@ new class extends Component {
             'status' => 'growing',
         ]);
 
-        // 2. Automatically flip the plot entity status to Active
         Plot::find($this->new_plot_id)->update(['status' => 'active']);
 
-        // 3. Inject baseline system operation log
         CropLog::create([
             'crop_cycle_id' => $cycle->id,
             'log_type' => 'progress',
@@ -159,13 +157,11 @@ new class extends Component {
             'notes' => "System initialized cultivation sequence under structural model: " . strtoupper($this->new_operation_type),
         ]);
 
-        // Clean slate text properties
         $this->new_crop_name = '';
         $this->new_weather_at_planting = '';
         $this->new_partner_name = '';
         $this->new_partner_phone = '';
         
-        // Match form state selections back to functional items
         $this->refreshDashboard();
         if ($this->activeCycleOptions->isNotEmpty()) {
             $this->crop_cycle_id = $this->activeCycleOptions->first()->id;
@@ -259,6 +255,11 @@ new class extends Component {
                                     <span class="text-gray-700 font-medium">{{ $activeCycle->partner->name }}</span>
                                 </div>
                                 @endif
+
+                                <div class="flex justify-between pt-2 mt-2 border-t border-gray-200/60 font-semibold text-slate-700">
+                                    <span class="text-gray-500 font-normal">Plot Cost:</span>
+                                    <span>${{ number_format($activeCycle->logs->sum('amount_in_usd'), 2) }}</span>
+                                </div>
                             </div>
                             @else
                             <p class="text-gray-400 italic">Fallow field space. Ready for activation.</p>
@@ -266,7 +267,7 @@ new class extends Component {
                         </div>
                     </div>
                     @empty
-                    <p class="text-gray-400 text-sm col-span-2">No individual plots defined inside this sector sector block.</p>
+                    <p class="text-gray-400 text-sm col-span-2">No individual plots defined inside this sector block.</p>
                     @endforelse
                 </div>
             </div>
