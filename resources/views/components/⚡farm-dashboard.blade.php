@@ -6,6 +6,7 @@ use App\Models\Plot;
 use App\Models\Partner;
 use App\Models\CropCycle;
 use App\Models\CropLog;
+use Illuminate\Support\Facades\Cache;
 
 new class extends Component {
     // Shared Dashboard Datasets
@@ -21,11 +22,12 @@ new class extends Component {
     public $allFieldOptions;
 
     // GLOBAL SETTINGS
-    public $exchange_rate = 57000; // Live editable exchange rate (1 USD = X SOS)
+    public $exchange_rate; 
 
     // Form 1: Operational Logger State
     public $crop_cycle_id;
     public $log_type = 'progress';
+    public $custom_log_type; // Holds dynamic custom category text
     public $title;
     public $notes;
     public $amount;
@@ -55,6 +57,9 @@ new class extends Component {
     // Runs once when component instantiates
     public function mount()
     {
+        // Automatically fetch your last saved market rate from server memory, or fallback to 57,000
+        $this->exchange_rate = Cache::get('farm_exchange_rate', 57000);
+
         $this->refreshDashboard();
         
         if ($this->activeCycleOptions->isNotEmpty()) {
@@ -66,6 +71,15 @@ new class extends Component {
         if ($this->allFieldOptions->isNotEmpty()) {
             $this->add_plot_field_id = $this->allFieldOptions->first()->id;
         }
+    }
+
+    // Livewire Hook: Automatically runs every time you type into the exchange_rate field
+    public function updatedExchangeRate($value)
+    {
+        if (is_numeric($value) && $value > 0) {
+            Cache::put('farm_exchange_rate', (float)$value, now()->addYears(1));
+        }
+        $this->refreshDashboard();
     }
 
     // Query engine to re-fetch fresh maps
@@ -114,15 +128,21 @@ new class extends Component {
             'currency' => 'required|in:USD,SOS',
         ]);
 
-        $calculatedUsd = null;
+        // Process custom categories vs default option lists
+        $finalCategory = $this->log_type;
+        if ($this->log_type === 'custom') {
+            $this->validate(['custom_log_type' => 'required|string|max:50']);
+            $finalCategory = trim($this->custom_log_type);
+        }
 
+        $calculatedUsd = null;
         if ($this->amount) {
-            $calculatedUsd = ($this->currency === 'SOS') ? ($this->amount / max(1, $this->exchange_rate)) : $this->amount;
+            $calculatedUsd = ($this->currency === 'SOS') ? ($this->amount / max(1, (float)$this->exchange_rate)) : $this->amount;
         }
 
         CropLog::create([
             'crop_cycle_id' => $this->crop_cycle_id,
-            'log_type' => $this->log_type,
+            'log_type' => $finalCategory, // Dynamic or preset category tag saved here
             'title' => $this->title,
             'notes' => $this->notes,
             'amount' => $this->amount,
@@ -133,6 +153,8 @@ new class extends Component {
         $this->title = '';
         $this->notes = '';
         $this->amount = null;
+        $this->custom_log_type = '';
+        $this->log_type = 'progress';
 
         $this->refreshDashboard();
     }
@@ -185,7 +207,7 @@ new class extends Component {
         Plot::find($this->new_plot_id)->update(['status' => 'active']);
 
         CropLog::create([
-            'cycle_id' => $cycle->id,
+            'crop_cycle_id' => $cycle->id,
             'log_type' => 'progress',
             'title' => 'Crop Cycle Launched',
             'notes' => "System initialized cultivation sequence under structural model: " . strtoupper($this->new_operation_type),
@@ -263,7 +285,7 @@ new class extends Component {
             <div class="font-bold text-slate-700 uppercase tracking-wider text-xs">Live Market Rate:</div>
             <div class="flex items-center space-x-1.5 font-semibold text-gray-900">
                 <span>1 USD =</span>
-                <input type="number" wire:model.live="exchange_rate" class="w-24 p-1 text-right text-sm border-gray-300 rounded focus:ring-amber-500 font-bold text-amber-700 bg-slate-50">
+                <input type="number" wire:model.live="exchange_rate" class="w-32 p-1 text-right text-sm border-gray-300 rounded focus:ring-amber-500 font-bold text-amber-700 bg-slate-50">
                 <span class="text-xs text-gray-500">SOS</span>
             </div>
         </div>
@@ -495,14 +517,22 @@ new class extends Component {
 
                     <div>
                         <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Log Category</label>
-                        <select wire:model="log_type" class="w-full text-sm border-gray-300 rounded-lg p-2 bg-slate-50 focus:ring-blue-500">
+                        <select wire:model.live="log_type" class="w-full text-sm border-gray-300 rounded-lg p-2 bg-slate-50 focus:ring-blue-500">
                             <option value="progress">Progress Observation</option>
                             <option value="fertilizer">Fertilizer Application</option>
                             <option value="infection">Infection Alert / Pest</option>
                             <option value="treatment">Treatment / Spraying</option>
                             <option value="harvest">Harvest Record</option>
+                            <option value="custom">Other / Custom Category...</option>
                         </select>
                     </div>
+
+                    @if($log_type === 'custom')
+                    <div class="animate-fade-in">
+                        <label class="block text-xs font-semibold text-amber-700 mb-1">Specify Custom Category Name</label>
+                        <input type="text" wire:model="custom_log_type" placeholder="e.g., Canal Digging, Biogas Repair" class="w-full text-sm border-amber-300 rounded-lg p-2 bg-amber-50/20 focus:ring-amber-500" required>
+                    </div>
+                    @endif
 
                     <div>
                         <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Action Title</label>
@@ -568,7 +598,7 @@ new class extends Component {
                     @if($selectedCycleDetails->partner)
                     <div class="flex justify-between">
                         <span class="text-gray-500">Partner Profile:</span>
-                        <span class="font-semibold text-slate-800">{{ $selectedCycleDetails->partner->name }} ({{ $selectedCycleDetails->partner->phone }})</span>
+                        <span class="font-semibold text-slate-800">{{ $selectedCycleDetails->partner->name }}</span>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-500">Your Retained Share:</span>
