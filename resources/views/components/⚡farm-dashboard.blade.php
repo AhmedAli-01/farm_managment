@@ -590,7 +590,7 @@ new class extends Component {
                     };
                     @endphp
                     <div class="relative pl-4 border-l-2 border-gray-200 pb-1">
-                        <div class="absolute -left-[5px] top-1.5 w-2 h-2 rounded-full bg-gray-300"></div>
+                        <div class="absolute -left-1.25 top-1.5 w-2 h-2 rounded-full bg-gray-300"></div>
 
                         <div class="flex justify-between items-start">
                             <div>
