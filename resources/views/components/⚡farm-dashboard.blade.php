@@ -18,6 +18,10 @@ new class extends Component {
     // Dropdown Choices Lists
     public $allPlotOptions;
     public $partnerOptions;
+    public $allFieldOptions;
+
+    // GLOBAL SETTINGS
+    public $exchange_rate = 57000; // Live editable exchange rate (1 USD = X SOS)
 
     // Form 1: Operational Logger State
     public $crop_cycle_id;
@@ -39,6 +43,11 @@ new class extends Component {
     public $new_partner_phone;
     public $new_partner_type = 'kalagoos';
 
+    // Form 3: Register New Plot State
+    public $add_plot_field_id;
+    public $add_plot_name;
+    public $add_plot_size;
+
     // Drawer Interaction State
     public $selected_cycle_id = null;
     public $selectedCycleDetails = null;
@@ -53,6 +62,9 @@ new class extends Component {
         }
         if ($this->allPlotOptions->isNotEmpty()) {
             $this->new_plot_id = $this->allPlotOptions->first()->id;
+        }
+        if ($this->allFieldOptions->isNotEmpty()) {
+            $this->add_plot_field_id = $this->allFieldOptions->first()->id;
         }
     }
 
@@ -70,8 +82,8 @@ new class extends Component {
         $this->activeCycleOptions = CropCycle::where('status', 'growing')->get();
         $this->allPlotOptions = Plot::all();
         $this->partnerOptions = Partner::all();
+        $this->allFieldOptions = Field::all();
 
-        // If a drawer is open, keep its text dataset refreshed live
         if ($this->selected_cycle_id) {
             $this->selectedCycleDetails = CropCycle::with(['plot', 'partner', 'logs' => function($q) {
                 $q->orderBy('created_at', 'desc');
@@ -79,14 +91,12 @@ new class extends Component {
         }
     }
 
-    // Opens the history side panel
     public function openDrawer($cycleId)
     {
-        $this->selected_cycle_id = $cycleId; // Fixed: added missing dollar sign
+        $this->selected_cycle_id = $cycleId;
         $this->refreshDashboard();
     }
 
-    // Closes the history side panel
     public function closeDrawer()
     {
         $this->selected_cycle_id = null;
@@ -104,11 +114,10 @@ new class extends Component {
             'currency' => 'required|in:USD,SOS',
         ]);
 
-        $exchangeRate = 57000; 
         $calculatedUsd = null;
 
         if ($this->amount) {
-            $calculatedUsd = ($this->currency === 'SOS') ? ($this->amount / $exchangeRate) : $this->amount;
+            $calculatedUsd = ($this->currency === 'SOS') ? ($this->amount / max(1, $this->exchange_rate)) : $this->amount;
         }
 
         CropLog::create([
@@ -176,7 +185,7 @@ new class extends Component {
         Plot::find($this->new_plot_id)->update(['status' => 'active']);
 
         CropLog::create([
-            'crop_cycle_id' => $cycle->id,
+            'cycle_id' => $cycle->id,
             'log_type' => 'progress',
             'title' => 'Crop Cycle Launched',
             'notes' => "System initialized cultivation sequence under structural model: " . strtoupper($this->new_operation_type),
@@ -193,7 +202,28 @@ new class extends Component {
         }
     }
 
-    // Changes cycle status to harvested/failed and frees up land space
+    // Submit Handler for Form 3: Creating a brand new plot from UI
+    public function createPlot()
+    {
+        $this->validate([
+            'add_plot_field_id' => 'required|exists:fields,id',
+            'add_plot_name' => 'required|string|max:255',
+            'add_plot_size' => 'required|numeric|min:0.01',
+        ]);
+
+        Plot::create([
+            'field_id' => $this->add_plot_field_id,
+            'name' => $this->add_plot_name,
+            'size' => $this->add_plot_size,
+            'status' => 'fallow', 
+        ]);
+
+        $this->add_plot_name = '';
+        $this->add_plot_size = '';
+
+        $this->refreshDashboard();
+    }
+
     public function archiveCycle($statusValue)
     {
         if (!$this->selected_cycle_id) return;
@@ -221,21 +251,24 @@ new class extends Component {
     }
 }; ?>
 
-<!-- UI Framework Layout -->
 <div class="p-6 max-w-7xl mx-auto space-y-6 relative overflow-hidden">
 
-    <!-- Header Context Block -->
-    <div class="flex justify-between items-center border-b border-gray-200 pb-4">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-200 pb-4 gap-4">
         <div>
             <h1 class="text-3xl font-bold text-slate-800">60 ha Farm Management</h1>
             <p class="text-gray-500">Shabelle Riverbank • Mogadishu, Somalia</p>
         </div>
-        <div class="bg-blue-600 text-white px-4 py-2 rounded-lg shadow-sm font-semibold">
-            Operational Dashboard
+
+        <div class="bg-white px-4 py-2 rounded-xl shadow-sm border border-amber-200 flex items-center space-x-3 text-sm">
+            <div class="font-bold text-slate-700 uppercase tracking-wider text-xs">Live Market Rate:</div>
+            <div class="flex items-center space-x-1.5 font-semibold text-gray-900">
+                <span>1 USD =</span>
+                <input type="number" wire:model.live="exchange_rate" class="w-24 p-1 text-right text-sm border-gray-300 rounded focus:ring-amber-500 font-bold text-amber-700 bg-slate-50">
+                <span class="text-xs text-gray-500">SOS</span>
+            </div>
         </div>
     </div>
 
-    <!-- Metrics Indicators Layout -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-green-600">
             <div class="text-sm font-medium text-gray-500 uppercase">Managed Sectors</div>
@@ -262,10 +295,8 @@ new class extends Component {
         </div>
     </div>
 
-    <!-- Splitting View Grid Workspace -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-        <!-- Land Map/Status Render Deck -->
         <div class="lg:col-span-2 space-y-4">
             <div class="flex justify-between items-center">
                 <h2 class="text-xl font-bold text-gray-800">Sectors & Plot Overview</h2>
@@ -290,7 +321,6 @@ new class extends Component {
                     $currentActiveCycle = $plot->cropCycles->where('status', 'growing')->first();
                     @endphp
 
-                    <!-- Card interaction container -->
                     <div @if($currentActiveCycle) wire:click="openDrawer({{ $currentActiveCycle->id }})" @endif class="border border-gray-100 rounded-lg p-4 bg-slate-50 flex flex-col justify-between transition relative {{ $currentActiveCycle ? 'cursor-pointer hover:border-blue-400 hover:bg-blue-50/20 shadow-sm' : '' }}">
                         <div class="flex justify-between items-start">
                             <div>
@@ -338,19 +368,46 @@ new class extends Component {
             @endforeach
         </div>
 
-        <!-- Controls Center Stack Panel -->
         <div class="space-y-6">
 
-            <!-- Panel Card 1: Launch New Crop Cycle -->
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h3 class="text-md font-bold text-slate-700 border-b border-gray-100 pb-2 mb-4">Register New Land Plot</h3>
+
+                <form wire:submit.prevent="createPlot" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Parent Sector (Field)</label>
+                        <select wire:model="add_plot_field_id" class="w-full text-sm border-gray-300 rounded-lg p-2 bg-slate-50 focus:ring-blue-500">
+                            @foreach($allFieldOptions as $fOpt)
+                            <option value="{{ $fOpt->id }}">{{ $fOpt->name }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Plot Identifier/Name</label>
+                        <input type="text" wire:model="add_plot_name" placeholder="e.g., Plot C - Okra Block" class="w-full text-sm border-gray-300 rounded-lg p-2 focus:ring-blue-500" required>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Size (Hectares)</label>
+                        <input type="number" step="0.01" wire:model="add_plot_size" placeholder="e.g., 1.25" class="w-full text-sm border-gray-300 rounded-lg p-2 focus:ring-blue-500" required>
+                    </div>
+
+                    <button type="submit" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-semibold py-2 px-4 rounded-lg shadow text-sm transition">
+                        ➕ Save New Plot Allocation
+                    </button>
+                </form>
+            </div>
+
             <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
                 <h3 class="text-md font-bold text-slate-700 border-b border-gray-100 pb-2 mb-4">Launch New Crop Cycle</h3>
 
                 <form wire:submit.prevent="launchCycle" class="space-y-4">
                     <div>
                         <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Target Land Space</label>
-                        <select wire:model="new_plot_id" class="w-full text-sm border-gray-300 rounded-lg p-2 bg-slate-50 focus:ring-blue-500 focus:border-blue-500">
+                        <select wire:model="new_plot_id" class="w-full text-sm border-gray-300 rounded-lg p-2 bg-slate-50 focus:ring-blue-500">
                             @foreach($allPlotOptions as $pOption)
-                            <option value="{{ $pOption->id }}">{{ $pOption->name }} ({{ $pOption->status }})</option>
+                            <option value="{{ $pOption->id }}">{{ $pOption->name }} ({{ strtoupper($pOption->status) }})</option>
                             @endforeach
                         </select>
                     </div>
@@ -421,7 +478,6 @@ new class extends Component {
                 </form>
             </div>
 
-            <!-- Panel Card 2: Operations & Expense Field Logger -->
             <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
                 <h3 class="text-md font-bold text-slate-700 border-b border-gray-100 pb-2 mb-4">Log New Action / Expense</h3>
 
@@ -467,9 +523,10 @@ new class extends Component {
                                 <option value="SOS">SOS (Sh.)</option>
                             </select>
                         </div>
+
                         @if($currency === 'SOS' && $amount > 0)
                         <p class="text-[11px] text-gray-500 mt-1 italic">
-                            Automatic accounting sync value: ${{ number_format($amount / 57000, 2) }} USD
+                            Automatic accounting sync value: ${{ number_format($amount / max(1, (float)$exchange_rate), 2) }} USD
                         </p>
                         @endif
                     </div>
@@ -482,7 +539,6 @@ new class extends Component {
         </div>
     </div>
 
-    <!-- REVOLVING HISTORY TIMELINE SLIDE-OVER DRAWER OVERLAY -->
     @if($selected_cycle_id && $selectedCycleDetails)
     <div class="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-xs">
         <div class="absolute inset-0" wire:click="closeDrawer"></div>
